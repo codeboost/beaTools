@@ -12,7 +12,8 @@ namespace bea{
 
 	std::string Global::scriptDir = std::string();
 	reportExceptionCb Global::reportException = _BeaScript::reportError; 
-	Context* Global::context = NULL; 
+	Persistent<ObjectTemplate> Global::externalTemplate;
+	
 
 	// Reads a file into a v8 string.
 	v8::Handle<v8::String> ReadFile(const char* name) {
@@ -159,7 +160,7 @@ namespace bea{
 
 		Context::Scope context_scope(m_context);
 
-		bea::Global::context = *m_context;
+		Global::InitExternalTemplate();
 
 		BEA_SET_METHOD(m_context->Global(), "require", include);
 		BEA_SET_METHOD(m_context->Global(), "log", Log);

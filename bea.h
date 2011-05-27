@@ -38,16 +38,36 @@ namespace bea{
 
 	class Indexable{
 	public:
-		void* m_ptr;
-		int m_size;
-		v8::ExternalArrayType m_type;
-	public:
-		Indexable(float* ptr, int size){
-			m_ptr = (void*)ptr;
-			m_size = size;
-			m_type = v8::ExternalArrayType::kExternalFloatArray;
+		void setPtr(void* ptr, int size, int type){}
+	};
 
+	class BeaBuffer{
+		void* m_buffer;
+		int m_size;
+		int m_type;
+	public:
+		inline BeaBuffer(int size, int type){
+			m_buffer = new char[size];
+			m_size = size;
+			m_type = type;
 		}
+		inline ~BeaBuffer(){
+			delete[] m_buffer;
+		}
+
+		inline void* ptr(){
+			return m_buffer;
+		}
+
+		inline int size(){
+			return m_size;
+		}
+
+		inline int type(){
+			return m_type;
+		}
+
+
 	};
 
 
@@ -348,6 +368,50 @@ namespace bea{
 		}
 	};
 
+
+	typedef void (*reportExceptionCb)(v8::TryCatch&);
+
+	struct Global{
+		static v8::Persistent<v8::ObjectTemplate> externalTemplate; 
+		static std::string scriptDir;
+		static reportExceptionCb reportException;
+
+		static void InitExternalTemplate(){
+			v8::HandleScope scope; 
+			v8::Handle<v8::ObjectTemplate> otmpl = v8::ObjectTemplate::New();
+			otmpl->SetInternalFieldCount(2);
+			externalTemplate = v8::Persistent<v8::ObjectTemplate>::New(otmpl);
+		}
+	};
+
+	template <class T>
+	struct IndexType{
+		enum {Value = 0};
+	};
+
+	template<> struct IndexType<unsigned char>{
+		enum  {Value = v8::kExternalUnsignedByteArray};
+	};
+	template<> struct IndexType<char>{
+		enum {Value = v8::kExternalByteArray};
+	};
+	template<> struct IndexType<short>{
+		enum {Value = v8::kExternalShortArray};
+	};
+	template<> struct IndexType<unsigned short>{
+		enum {Value = v8::kExternalUnsignedShortArray};
+	};
+	template<> struct IndexType<int>{
+		enum {Value = v8::kExternalIntArray};
+	};
+	template<> struct IndexType<unsigned int>{
+		enum {Value = v8::kExternalUnsignedIntArray};
+	};
+	template<> struct IndexType<float>{
+		enum {Value = v8::kExternalFloatArray};
+	};
+
+
 	template<class T>
 	struct Convert<external<T> >{
 		static bool Is(v8::Handle<v8::Value> v){
@@ -367,50 +431,43 @@ namespace bea{
 		}
 	};
 
-	//void*
-	template<>
-	struct Convert<void*>{
+#if 0
+	template<class T>
+	struct Convert<external<T> >{
 		static bool Is(v8::Handle<v8::Value> v){
-			return !v.IsEmpty() && v->IsExternal();
+			v8::Handle<v8::Object> obj = v->ToObject();
+			return !v.IsEmpty() && 
+					v->IsObject() && 
+					obj->InternalFieldCount() == 2 && 
+					(int)obj->GetPointerFromInternalField(1) == (int)IndexType<T>::Value;
 		}
 
-		static void* FromJS(v8::Handle<v8::Value> v, int nArg){
-			
+		static external<T> FromJS(v8::Handle<v8::Value> v, int nArg){
 			const char* msg = "Externally allocated buffer expected";
 			if (!Is(v)) BEATHROW();
-			 v8::Handle<v8::External> ext = v8::Handle<v8::External>::Cast(v);
+			v8::Handle<v8::Object> thisObj = v->ToObject();
 
-			 return ext->Value();
+			void* ptr = thisObj->GetPointerFromInternalField(0); 
+
+			return external<T>(static_cast<T*>(ptr));
 		}
 
-		static v8::Handle<v8::Value> ToJS(const void* val){
-			return v8::External::New((void*)val);
-		}
-	};
+		static v8::Handle<v8::Value> ToJS(const external<T>& val){
+			//return v8::External::New(val.ptr);
 
-	template<>
-	struct Convert<char*>{
-		static bool Is(v8::Handle<v8::Value> v){
-			return Convert<void*>::Is(v);
-		}
+			v8::HandleScope scope; 
+			v8::Handle<v8::Object> obj = Global::externalTemplate->NewInstance();
 
-		static char* FromJS(v8::Handle<v8::Value> v, int nArg){
-			return (char*)Convert<void*>::FromJS(v, nArg);
-		}
-
-		static v8::Handle<v8::Value> ToJS(const char* val){
-			return Convert<void*>::ToJS((const void*)val);
+			obj->SetPointerInInternalField(0, val.ptr);
+			obj->SetPointerInInternalField(1, (void*)(int)IndexType<T>::Value);
+			return scope.Close(obj);
 		}
 	};
+#endif
 
-	typedef void (*reportExceptionCb)(v8::TryCatch&);
 
-	struct Global{
 
-		static std::string scriptDir;
-		static reportExceptionCb reportException;
-		static v8::Context *context;
-	};
+
 	
 
 	//////////////////////////////////////////////////////////////////////////
@@ -470,8 +527,12 @@ namespace bea{
 			void* p = o->GetPointerFromInternalField(0);
 
 			if (p != NULL){
-				assert(_this->m_destructor != NULL && "Destructor not set!");
-				_this->m_destructor(value);
+				if (_this->m_destructor)
+					_this->m_destructor(value);
+				else{
+					delete p;
+				}
+
 			}
 			value.Dispose();
 		}
