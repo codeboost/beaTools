@@ -165,20 +165,27 @@ namespace bea{
 		BEA_SET_METHOD(m_context->Global(), "require", include);
 		BEA_SET_METHOD(m_context->Global(), "log", Log);
 		BEA_SET_METHOD(m_context->Global(), "yield", yield);
+		BEA_SET_METHOD(m_context->Global(), "collectGarbage", collectGarbage);
 
 		expose();
 		return true; 
 	}
 
+	v8::Handle<v8::Value> _BeaScript::collectGarbage( const v8::Arguments& args ){
+
+		while (!V8::IdleNotification()) {}
+		return args.This();
+	}
+
 	v8::Handle<v8::Value> _BeaScript::yield( const v8::Arguments& args )
 	{
 		{
-			int timeToYield = bea::Optional<int>::FromJS(args, 0, 100); 
+			int timeToYield = bea::Optional<int>::FromJS(args, 0, 10); 
 
 			v8::Unlocker unlocker;
 
 			if (m_yielder)
-				m_yielder();
+				m_yielder(timeToYield);
 
 			//Cleanup garbage
 			//while (!V8::IdleNotification()) {}		

@@ -11,7 +11,7 @@ namespace bea{
 	//Allows calling functions, holds a map of cached js functions
 	//Context can be re-assigned (v8::Persistent<> is ref-counted)
 	typedef void (*logCallback)(const char* msg);
-	typedef void (*yieldCallback)();
+	typedef void (*yieldCallback)(int timeout);
 	class BeaContext{
 
 	public:
@@ -70,6 +70,7 @@ namespace bea{
 		static v8::Handle<v8::Value> execute(v8::Handle<v8::String> script);
 
 		static v8::Handle<v8::Value> yield(const v8::Arguments& args);
+		static v8::Handle<v8::Value> collectGarbage(const v8::Arguments& args);
 
 		virtual void expose() {}
 	public:
