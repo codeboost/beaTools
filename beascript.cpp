@@ -3,6 +3,7 @@
 #include <iostream>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <v8.h>
 
 using namespace v8;
 namespace bea{
@@ -37,10 +38,10 @@ namespace bea{
 	}
 
 	//Logs a message to the console
-	static Handle<Value> Log(const Arguments& args) {
+	static v8::Handle<v8::Value> Log(const Arguments& args) {
 		if (args.Length() < 1) return v8::Undefined();
 		HandleScope scope;
-		Handle<Value> arg = args[0];
+		v8::Handle<v8::Value> arg = args[0];
 		v8::String::Utf8Value value(arg);
 		//printf("Logged: %s\n", *value);
 		std::cout << "Logged: " << *value << std::endl;
@@ -56,12 +57,12 @@ namespace bea{
 
 	//Include a script file into current context
 	//Raise javascript exception if load failed 
-	Handle<Value> _BeaScript::include( const Arguments& args )
+	v8::Handle<v8::Value> _BeaScript::include( const Arguments& args )
 	{
 		boost::filesystem::path parentPath = scriptPath.parent_path();
 
 		HandleScope scope; 
-		Handle<Value> result;
+		v8::Handle<v8::Value> result;
 		
 		//v8::String::Utf8Value fileName(args[i]);
 		std::string fileName = bea::Convert<std::string>::FromJS(args[0], 0);
@@ -69,7 +70,7 @@ namespace bea{
 		//Add the script path to it
 		boost::filesystem::path absolutePath = parentPath / fileName; 
 
-		Handle<v8::String> source = ReadFile(absolutePath.string().c_str());
+		v8::Handle<v8::String> source = ReadFile(absolutePath.string().c_str());
 
 		if (source.IsEmpty()){
 			std::stringstream s;
@@ -86,14 +87,14 @@ namespace bea{
 	}
 	
 	//Execute a string of script
-	Handle<Value> _BeaScript::execute( Handle<v8::String> script )
+	v8::Handle<v8::Value> _BeaScript::execute( v8::Handle<v8::String> script )
 	{
 		HandleScope scope;
 		TryCatch try_catch;
-		Handle<Value> result; 
+		v8::Handle<v8::Value> result; 
 
 		// Compile the script and check for errors.
-		Handle<v8::Script> compiled_script = v8::Script::Compile(script);
+		v8::Handle<v8::Script> compiled_script = v8::Script::Compile(script);
 		if (compiled_script.IsEmpty()) {
 			reportError(try_catch);
 			return result;
@@ -137,12 +138,12 @@ namespace bea{
 		Context::Scope context_scope(m_context);
 
 		HandleScope scope;
-		Handle<v8::String> str = ReadFile(fileName);
+		v8::Handle<v8::String> str = ReadFile(fileName);
 
 		if (str.IsEmpty())
 			return false; 
 
-		Handle<Value> v = execute(str);
+		v8::Handle<v8::Value> v = execute(str);
 
 		return !v.IsEmpty();
 	}
@@ -153,10 +154,10 @@ namespace bea{
 
 		lastError = "";
 		HandleScope handle_scope;
-		Handle<ObjectTemplate> global = ObjectTemplate::New();
+		v8::Handle<ObjectTemplate> global = ObjectTemplate::New();
 
 		//Create the context
-		m_context = Context::New(NULL, global);
+		m_context = v8::Context::New(NULL, global);
 
 		Context::Scope context_scope(m_context);
 
@@ -194,7 +195,7 @@ namespace bea{
 		return args.This();
 	}
 	//Call a javascript function, store the found function in a local cache for faster access
-	Handle<Value> BeaContext::call(const char *fnName, int argc, Handle<Value> argv[]){
+	v8::Handle<v8::Value> BeaContext::call(const char *fnName, int argc, v8::Handle<v8::Value> argv[]){
 		
 		HandleScope scope;
 		Context::Scope context_scope(m_context);
@@ -207,7 +208,7 @@ namespace bea{
 			fn = iter->second;
 		else {
 			//Lookup function in the script 
-			Handle<Value> fnv = m_context->Global()->Get(v8::String::New(fnName));
+			v8::Handle<v8::Value> fnv = m_context->Global()->Get(v8::String::New(fnName));
 
 			if (!fnv->IsFunction()) {
 				std::stringstream strstr;
@@ -217,14 +218,14 @@ namespace bea{
 			} else {
 
 				//Store found function in our cache
-				fn = Persistent<Function>::New(Handle<Function>::Cast(fnv));
+				fn = Persistent<Function>::New(v8::Handle<Function>::Cast(fnv));
 				m_fnCached[std::string(fnName)] = fn;
 			}
 		}
 
 		//Call the function
 		TryCatch try_catch;
-		Handle<Value> result = fn->Call(m_context->Global(), argc, argv);
+		v8::Handle<v8::Value> result = fn->Call(m_context->Global(), argc, argv);
 
 		if (result.IsEmpty())
 			reportError(try_catch);
@@ -256,9 +257,9 @@ namespace bea{
 	bool BeaContext::exposeToObject( const char* targetName, const char* exposedName, v8::Handle<v8::Value> what )
 	{
 		HandleScope scope; 
-		Handle<Value> jc = m_context->Global()->Get(v8::String::New(targetName));
+		v8::Handle<v8::Value> jc = m_context->Global()->Get(v8::String::New(targetName));
 		if (!jc.IsEmpty() && jc->IsObject()){
-			Handle<Object> obj = jc->ToObject();
+			v8::Handle<Object> obj = jc->ToObject();
 			return obj->Set(v8::String::New(exposedName), what);
 		}
 		return false; 
