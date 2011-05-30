@@ -42,7 +42,7 @@ namespace bea{
 	};
 
 	class BeaBuffer{
-		void* m_buffer;
+		char* m_buffer;
 		int m_size;
 		int m_type;
 	public:
