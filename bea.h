@@ -368,6 +368,23 @@ namespace bea{
 		}
 	};
 
+	template <>
+	struct Convert<unsigned int>{
+		static inline bool Is(v8::Handle<v8::Value> v){
+			return !v.IsEmpty() && v->IsUint32();
+		}
+		static inline unsigned int FromJS(v8::Handle<v8::Value> v, int nArg){
+			static const char* msg = "Integer(byte) value expected";
+			if (!Is(v)) BEATHROW();
+			return v->Uint32Value();
+		}
+
+		static inline v8::Handle<v8::Value> ToJS(const unsigned int& val){
+			return v8::Uint32::New(val);
+		}
+	};
+
+
 
 	typedef void (*reportExceptionCb)(v8::TryCatch&);
 
