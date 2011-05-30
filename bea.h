@@ -384,6 +384,35 @@ namespace bea{
 		}
 	};
 
+	template<> struct Convert<unsigned long> {
+		static bool Is(v8::Handle<v8::Value> v) {
+			return bea::Convert<unsigned int>::Is(v);
+		}
+
+		static unsigned long FromJS(v8::Handle<v8::Value> v, int nArg) {
+			return (unsigned long)bea::Convert<unsigned int>::FromJS(v, nArg);
+		}
+
+		static v8::Handle<v8::Value> ToJS(unsigned long const& v) {
+			return bea::Convert<unsigned int>::ToJS(v);
+		}
+
+	};
+
+	template<> struct Convert<long> {
+		static bool Is(v8::Handle<v8::Value> v) {
+			return bea::Convert<int>::Is(v);
+		}
+
+		static unsigned long FromJS(v8::Handle<v8::Value> v, int nArg) {
+			return (long)bea::Convert<int>::FromJS(v, nArg);
+		}
+
+		static v8::Handle<v8::Value> ToJS(long const& v) {
+			return bea::Convert<int>::ToJS((int const&)v);
+		}
+
+	};
 
 
 	typedef void (*reportExceptionCb)(v8::TryCatch&);
@@ -547,7 +576,7 @@ namespace bea{
 				if (_this->m_destructor)
 					_this->m_destructor(value);
 				else{
-					delete p;
+					delete static_cast<T*>(p);
 				}
 
 			}
