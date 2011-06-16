@@ -67,7 +67,7 @@ namespace bea{
 		static v8::Handle<v8::Value> include(const v8::Arguments& args);
 		
 		//Execute a string of javascript
-		static v8::Handle<v8::Value> execute(v8::Handle<v8::String> script);
+		static v8::Handle<v8::Value> execute(v8::Handle<v8::String> script, v8::Handle<v8::String> fileName);
 
 		static v8::Handle<v8::Value> yield(const v8::Arguments& args);
 		static v8::Handle<v8::Value> collectGarbage(const v8::Arguments& args);

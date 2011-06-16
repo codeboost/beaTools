@@ -54,15 +54,15 @@ namespace bea{
 	boost::filesystem::path _BeaScript::scriptPath;
 
 	
+	std::string toString(Handle<Value> v){
+		return bea::Convert<std::string>::FromJS(v->ToString(), 0); 
+	}
 
 	//Include a script file into current context
 	//Raise javascript exception if load failed 
 	v8::Handle<v8::Value> _BeaScript::include( const Arguments& args )
 	{
 		boost::filesystem::path parentPath = scriptPath.parent_path();
-
-		HandleScope scope; 
-		v8::Handle<v8::Value> result;
 		
 		//v8::String::Utf8Value fileName(args[i]);
 		std::string fileName = bea::Convert<std::string>::FromJS(args[0], 0);
@@ -70,31 +70,66 @@ namespace bea{
 		//Add the script path to it
 		boost::filesystem::path absolutePath = parentPath / fileName; 
 
-		v8::Handle<v8::String> source = ReadFile(absolutePath.string().c_str());
+		if (!absolutePath.has_extension() && !boost::filesystem::exists(absolutePath))
+			absolutePath.replace_extension(".js");
+
+		HandleScope scope; 
+		v8::Handle<v8::Value> result;
+		v8::Handle<v8::String> source;
+		
+		if (boost::filesystem::exists(absolutePath))
+			source = ReadFile(absolutePath.string().c_str());
 
 		if (source.IsEmpty()){
 			std::stringstream s;
-			s << "Could not include file " << fileName.c_str();
+			s << "Could not include file " << absolutePath.string();
 			return v8::ThrowException(v8::Exception::Error(v8::String::New(s.str().c_str())));
 		}
 
-		result = execute(source);
+		//Run the included script in a new context
+		Persistent<v8::Context> newContext = v8::Context::New();
+		//Inspired by node_script.js - copy all main context's global properties to the new context
+		
+		Local<Array> keys = args.This()->GetPropertyNames();
+		for (uint32_t i = 0; i < keys->Length(); i++) {
+			Handle<String> key = keys->Get(i)->ToString();
+			Handle<Value> value = args.This()->Get(key);
+			newContext->Enter();
+			newContext->Global()->Set(key, value);
+			newContext->Exit();
+		}
+
+		Handle<Value> retVal; 
+		{
+			Context::Scope ctxScope(newContext);
+			//Handle<Value> vG = newContext->Global()->Get(v8::String::New("log"));
+			//std::cout << toString(vG) << std::endl;
 			
-		if (result.IsEmpty())
-			return v8::ThrowException(v8::Exception::Error(v8::String::New(lastError.c_str())));
-	
-		return scope.Close(result);
+			//Add/replace the global 'exports' object
+			newContext->Global()->Set(v8::String::NewSymbol("exports"), v8::Object::New());
+
+			result = execute(source, bea::Convert<std::string>::ToJS(absolutePath.string().c_str())->ToString());
+
+			if (!result.IsEmpty()){
+				retVal = newContext->Global()->Get(v8::String::NewSymbol("exports"));
+			}
+			else
+				retVal = v8::ThrowException(v8::Exception::Error(v8::String::New(lastError.c_str())));
+		}
+
+		newContext.Dispose();
+		return scope.Close(retVal);
 	}
 	
 	//Execute a string of script
-	v8::Handle<v8::Value> _BeaScript::execute( v8::Handle<v8::String> script )
+	v8::Handle<v8::Value> _BeaScript::execute( v8::Handle<v8::String> script, v8::Handle<v8::String> fileName )
 	{
 		HandleScope scope;
 		TryCatch try_catch;
 		v8::Handle<v8::Value> result; 
 
 		// Compile the script and check for errors.
-		v8::Handle<v8::Script> compiled_script = v8::Script::Compile(script);
+		v8::Handle<v8::Script> compiled_script = v8::Script::Compile(script, fileName);
 		if (compiled_script.IsEmpty()) {
 			reportError(try_catch);
 			return result;
@@ -113,15 +148,9 @@ namespace bea{
 
 	//Report the error from an exception, store it in lastError
 	void BeaContext::reportError(TryCatch& try_catch){
-
-		v8::String::Utf8Value error(try_catch.Exception());
-		std::stringstream strstr;
-		strstr << try_catch.Message()->GetLineNumber() << ": " << *error;
-		lastError = strstr.str();
-
+		lastError = *v8::String::Utf8Value(try_catch.Exception());
 		if (m_logger)
-			m_logger(lastError.c_str());
-
+			m_logger(*v8::String::Utf8Value(try_catch.StackTrace()));
 	}
 
 	//Initialize the javascript context and load a script file into it
@@ -143,7 +172,7 @@ namespace bea{
 		if (str.IsEmpty())
 			return false; 
 
-		v8::Handle<v8::Value> v = execute(str);
+		v8::Handle<v8::Value> v = execute(str, bea::Convert<std::string>::ToJS(fileName)->ToString());
 
 		return !v.IsEmpty();
 	}
