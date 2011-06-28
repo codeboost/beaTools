@@ -4,17 +4,20 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <v8.h>
+#include <v8-debug.h>
 
 using namespace v8;
 namespace bea{
 	
 	logCallback BeaContext::m_logger = NULL; 
 	yieldCallback BeaContext::m_yielder = NULL;
+	std::vector<std::string> BeaContext::cmdLine;
 
 	std::string Global::scriptDir = std::string();
 	reportExceptionCb Global::reportException = _BeaScript::reportError; 
-	Persistent<ObjectTemplate> Global::externalTemplate;
-	
+	Persistent<v8::ObjectTemplate> Global::externalTemplate;
+	Persistent<v8::ObjectTemplate> BeaContext::globalTemplate;
+	Persistent<v8::Object> BeaContext::globalSandbox;
 
 	// Reads a file into a v8 string.
 	v8::Handle<v8::String> ReadFile(const char* name) {
@@ -54,18 +57,59 @@ namespace bea{
 	boost::filesystem::path _BeaScript::scriptPath;
 
 	
-	std::string toString(Handle<Value> v){
+	std::string toString(v8::Handle<v8::Value> v){
 		return bea::Convert<std::string>::FromJS(v->ToString(), 0); 
 	}
 
-	//Include a script file into current context
-	//Raise javascript exception if load failed 
-	v8::Handle<v8::Value> _BeaScript::include( const Arguments& args )
-	{
-		boost::filesystem::path parentPath = scriptPath.parent_path();
+	v8::Handle<v8::Object> createModule(const std::string &fileName){
+
+		v8::HandleScope scope; 
+		v8::Local<v8::Object> obj = v8::Object::New();
+		v8::Handle<v8::String> strFileName = Convert<std::string>::ToJS(fileName)->ToString();
 		
+		obj->Set(v8::String::New("id"), strFileName);
+		obj->Set(v8::String::New("filename"), strFileName);
+		obj->Set(v8::String::NewSymbol("exports"), v8::Object::New());
+		return scope.Close(obj);
+	}
+
+	v8::Handle<v8::Value> _BeaScript::enumProperties(const v8::Arguments& args){
+
+		HandleScope scope; 
+		
+		Local<Object> obj = args[0]->ToObject();
+		v8::Local<v8::Array> keys = obj->GetPropertyNames();
+
+		for (uint32_t i = 0; i < keys->Length(); i++) {
+			v8::Handle<v8::String> key = keys->Get(i)->ToString();
+			v8::Handle<v8::Value> value = obj->Get(key);
+			std::cout << toString(key) << " : " << toString(value) << std::endl;
+		}
+		return args.This(); 
+	}
+
+	void CloneObject(Handle<Object> src, Handle<Object> dest){
+
+		HandleScope scope; 
+		v8::Local<v8::Array> keys = src->GetPropertyNames();
+		TryCatch try_catch; 
+		int ignored = 0; 
+		for (uint32_t i = 0; i < keys->Length(); i++) {
+			v8::Handle<v8::String> key = keys->Get(i)->ToString();
+			if (key->Length() > 0){
+				v8::Handle<v8::Value> value = src->Get(key);
+				dest->Set(key, value);
+			} 
+		}
+	}
+
+
+	v8::Handle<v8::Value> _BeaScript::loadScriptSource(const std::string &fileName){
+
+		boost::filesystem::path parentPath = scriptPath.parent_path();
+
 		//v8::String::Utf8Value fileName(args[i]);
-		std::string fileName = bea::Convert<std::string>::FromJS(args[0], 0);
+		//std::string fileName = bea::Convert<std::string>::FromJS(args[0], 0);
 
 		//Add the script path to it
 		boost::filesystem::path absolutePath = parentPath / fileName; 
@@ -74,9 +118,9 @@ namespace bea{
 			absolutePath.replace_extension(".js");
 
 		HandleScope scope; 
-		v8::Handle<v8::Value> result;
+		v8::Local<v8::Value> result;
 		v8::Handle<v8::String> source;
-		
+
 		if (boost::filesystem::exists(absolutePath))
 			source = ReadFile(absolutePath.string().c_str());
 
@@ -85,40 +129,53 @@ namespace bea{
 			s << "Could not include file " << absolutePath.string();
 			return v8::ThrowException(v8::Exception::Error(v8::String::New(s.str().c_str())));
 		}
+		return scope.Close(source); 
+	}
 
-		//Run the included script in a new context
-		Persistent<v8::Context> newContext = v8::Context::New();
-		//Inspired by node_script.js - copy all main context's global properties to the new context
+
+	//Include a script file into current context
+	//Raise javascript exception if load failed 
+	v8::Handle<v8::Value> _BeaScript::include( const Arguments& args )
+	{
+		HandleScope scope; 
 		
-		Local<Array> keys = args.This()->GetPropertyNames();
-		for (uint32_t i = 0; i < keys->Length(); i++) {
-			Handle<String> key = keys->Get(i)->ToString();
-			Handle<Value> value = args.This()->Get(key);
-			newContext->Enter();
-			newContext->Global()->Set(key, value);
-			newContext->Exit();
+
+		v8::Handle<v8::String> source = ReadFile(*v8::String::Utf8Value(args[0]));
+
+		if (source.IsEmpty())
+			return v8::Null();
+
+		v8::Handle<v8::Value> result = v8::Null();
+
+		v8::Handle<v8::Context> context = v8::Context::GetCalling();
+		v8::Handle<v8::Context> moduleContext = v8::Context::New(NULL, v8::ObjectTemplate::New());
+		moduleContext->SetSecurityToken(context->GetSecurityToken());
+		v8::Context::Scope context_scope(moduleContext);
+		v8::TryCatch try_catch;
+		v8::Handle<v8::Script> script = v8::Script::New(source, args[0]->ToString());
+
+		if (script.IsEmpty()){
+			reportError(try_catch);
 		}
+		else {
 
-		Handle<Value> retVal; 
-		{
-			Context::Scope ctxScope(newContext);
-			//Handle<Value> vG = newContext->Global()->Get(v8::String::New("log"));
-			//std::cout << toString(vG) << std::endl;
-			
-			//Add/replace the global 'exports' object
-			newContext->Global()->Set(v8::String::NewSymbol("exports"), v8::Object::New());
+			CloneObject(globalSandbox, moduleContext->Global());
+			CloneObject(args[1]->ToObject(), moduleContext->Global());
 
-			result = execute(source, bea::Convert<std::string>::ToJS(absolutePath.string().c_str())->ToString());
+			result = script->Run();
 
-			if (!result.IsEmpty()){
-				retVal = newContext->Global()->Get(v8::String::NewSymbol("exports"));
+			if (try_catch.HasCaught() || result.IsEmpty()) {
+				reportError(try_catch);
 			}
-			else
-				retVal = v8::ThrowException(v8::Exception::Error(v8::String::New(lastError.c_str())));
+			else {
+				//Copy everything back to the mod object
+				Handle<Value> mod = moduleContext->Global()->Get(v8::String::New("module"));
+				if (!mod.IsEmpty() && mod->IsObject()){
+					CloneObject(mod->ToObject(), args[1]->ToObject()); 
+				}
+			}
 		}
-
-		newContext.Dispose();
-		return scope.Close(retVal);
+		return result;
 	}
 	
 	//Execute a string of script
@@ -153,12 +210,7 @@ namespace bea{
 			m_logger(*v8::String::Utf8Value(try_catch.StackTrace()));
 	}
 
-	//Initialize the javascript context and load a script file into it
-	bool _BeaScript::loadScript( const char* fileName )
-	{
-		v8::Locker locker; 
-		if (!init())
-			return false; 
+	v8::Handle<v8::Value> _BeaScript::executeScript(const char* fileName){
 
 		scriptPath = boost::filesystem::system_complete(fileName);
 
@@ -169,35 +221,71 @@ namespace bea{
 		HandleScope scope;
 		v8::Handle<v8::String> str = ReadFile(fileName);
 
-		if (str.IsEmpty())
+		v8::Handle<v8::Value> v;
+
+		if (!str.IsEmpty()){
+			v = execute(str, bea::Convert<std::string>::ToJS(fileName)->ToString());
+		}
+
+		return scope.Close(v);
+	}
+
+	//Initialize the javascript context and load a script file into it
+	bool _BeaScript::loadScript( const char* fileName )
+	{
+		v8::Locker locker; 
+		if (!init())
 			return false; 
 
-		v8::Handle<v8::Value> v = execute(str, bea::Convert<std::string>::ToJS(fileName)->ToString());
+	
+		HandleScope scope; 
+		Handle<Value> v = executeScript(fileName);
 
 		return !v.IsEmpty();
+	}
+
+
+	v8::Handle<v8::ObjectTemplate> _BeaScript::createGlobal(){
+		
+		v8::Handle<v8::ObjectTemplate> global = v8::ObjectTemplate::New();
+		global->Set(v8::String::New("loadCommonJSModule"), v8::FunctionTemplate::New(include));
+		global->Set(v8::String::New("log"), v8::FunctionTemplate::New(Log));
+		global->Set(v8::String::New("yield"), v8::FunctionTemplate::New(yield));
+		global->Set(v8::String::New("collectGarbage"), v8::FunctionTemplate::New(collectGarbage));
+		return global;
 	}
 
 	//Initialize the javascript context and expose the methods in exposer
 	bool _BeaScript::init()
 	{
-
+		
 		lastError = "";
 		HandleScope handle_scope;
-		v8::Handle<ObjectTemplate> global = ObjectTemplate::New();
 
+		if (globalTemplate.IsEmpty()){
+			globalTemplate = v8::Persistent<v8::ObjectTemplate>::New(createGlobal());
+		}
+		
 		//Create the context
-		m_context = v8::Context::New(NULL, global);
+		m_context = v8::Context::New(NULL, globalTemplate);
 
 		Context::Scope context_scope(m_context);
 
-		Global::InitExternalTemplate();
+		globalSandbox = v8::Persistent<v8::Object>::New(v8::Object::New()); 
 
-		BEA_SET_METHOD(m_context->Global(), "require", include);
-		BEA_SET_METHOD(m_context->Global(), "log", Log);
-		BEA_SET_METHOD(m_context->Global(), "yield", yield);
-		BEA_SET_METHOD(m_context->Global(), "collectGarbage", collectGarbage);
+		Handle<Value> vCmdLine = bea::Convert<std::vector<std::string> >::ToJS(cmdLine);
 
+		Handle<Object> objProcess = v8::Object::New();
+		objProcess->Set(v8::String::New("argv"), vCmdLine);
+
+		m_context->Global()->Set(v8::String::New("process"), objProcess);
+		
 		expose();
+
+		executeScript("./lib/loader.js");
+		CloneObject(m_context->Global(), globalSandbox);
+
+
 		return true; 
 	}
 
@@ -223,6 +311,8 @@ namespace bea{
 		}
 		return args.This();
 	}
+
+
 	//Call a javascript function, store the found function in a local cache for faster access
 	v8::Handle<v8::Value> BeaContext::call(const char *fnName, int argc, v8::Handle<v8::Value> argv[]){
 		

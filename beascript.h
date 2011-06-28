@@ -18,6 +18,10 @@ namespace bea{
 		static std::string lastError;
 		static logCallback	m_logger;
 		static yieldCallback m_yielder;
+		static std::vector<std::string> cmdLine; 
+		static v8::Persistent<v8::ObjectTemplate> globalTemplate; 
+		static v8::Persistent<v8::Object> globalSandbox;
+		
 	protected:
 		//Context in which the script will run
 		v8::Persistent<v8::Context> m_context;
@@ -57,6 +61,12 @@ namespace bea{
 		static void setYieldCallback(yieldCallback cb){
 			m_yielder = cb;
 		}
+
+		static void setCommandLine(int argc, char** argv){
+			for (int k = 0; k < argc; k++){
+				cmdLine.push_back(std::string(argv[k]));
+			}
+		}
 	};
 
 	//Helper class to run a javascript script
@@ -64,15 +74,22 @@ namespace bea{
 		static boost::filesystem::path scriptPath; 
 	protected:
 		//Invocation callback for the 'require' javascript function
+		static v8::Handle<v8::Value> loadScriptSource(const std::string& fileName);
 		static v8::Handle<v8::Value> include(const v8::Arguments& args);
+		static v8::Handle<v8::Value> enumProperties(const v8::Arguments& args);
+		static v8::Handle<v8::ObjectTemplate> createGlobal();
 		
 		//Execute a string of javascript
 		static v8::Handle<v8::Value> execute(v8::Handle<v8::String> script, v8::Handle<v8::String> fileName);
-
+		
 		static v8::Handle<v8::Value> yield(const v8::Arguments& args);
 		static v8::Handle<v8::Value> collectGarbage(const v8::Arguments& args);
 
 		virtual void expose() {}
+		v8::Handle<v8::Value> executeScript(const char* fileName);
+		//Init the script context and expose the objects offered by IBeaExposer
+		bool init();
+
 	public:
 		inline _BeaScript(){
 
@@ -80,8 +97,6 @@ namespace bea{
 		virtual ~_BeaScript(){
 
 		}
-		//Init the script context and expose the objects offered by IBeaExposer
-		bool init();
 		
 		//Load, compile and execute a script 
 		bool loadScript(const char* fileName);
